@@ -302,98 +302,155 @@ def truncate_output(text: str, max_lines: int = 100, max_chars: int = 10000) -> 
     return result, truncated
 
 
-def render_message(msg: dict, tool_results: dict, collapsed: bool) -> str:
-    """Render a single message to HTML."""
-    msg_type = msg.get('type')
-    timestamp = msg.get('timestamp', '')
+def render_user_content(msg: dict) -> str:
+    """Render user message content (just the inner parts)."""
     message = msg.get('message', {})
+    content = message.get('content', '')
 
-    if msg_type == 'user':
-        content = message.get('content', '')
+    if isinstance(content, str):
+        # Strip "Human: " prefix if present
+        if content.startswith('Human: '):
+            content = content[7:]
+        return f'<div class="text-block">{markdown_to_html(content)}</div>'
 
-        # String content (user prompt)
-        if isinstance(content, str):
-            # Strip "Human: " prefix if present
-            if content.startswith('Human: '):
-                content = content[7:]
+    # Array content (tool results) - these get paired with tool_use, skip
+    return ''
 
-            ts_display = ''
-            if timestamp:
-                try:
-                    dt = parse_timestamp(timestamp)
-                    ts_display = f'<span class="timestamp">{dt.strftime("%H:%M:%S")}</span>'
-                except:
-                    pass
 
-            return f'''
-            <div class="message user">
-                <div class="message-header">
-                    <span class="role">User</span>
-                    {ts_display}
-                </div>
-                <div class="content">{markdown_to_html(content)}</div>
-            </div>
-            '''
+def render_assistant_content(msg: dict, tool_results: dict, collapsed: bool) -> list:
+    """Render assistant message content (just the inner parts)."""
+    message = msg.get('message', {})
+    content = message.get('content', [])
+    if not content:
+        return []
 
-        # Array content (tool results) - these get paired with tool_use, skip standalone rendering
+    parts = []
+    for block in content:
+        block_type = block.get('type')
+
+        if block_type == 'text':
+            text = block.get('text', '')
+            if text.strip():
+                parts.append(f'<div class="text-block">{markdown_to_html(text)}</div>')
+
+        elif block_type == 'tool_use':
+            tool_id = block.get('id', '')
+            tool_name = block.get('name', '')
+            tool_input = block.get('input', {})
+
+            summary = escape_html(get_tool_summary(tool_name, tool_input))
+            input_formatted = escape_html(format_tool_input(tool_name, tool_input))
+
+            # Get paired result
+            result_html = ''
+            if tool_id in tool_results:
+                result = tool_results[tool_id]
+                result_content = result.get('content', '')
+                is_error = result.get('is_error', False)
+
+                if result_content:
+                    truncated_content, was_truncated = truncate_output(str(result_content))
+                    error_class = ' error' if is_error else ''
+                    truncated_note = ' <span class="truncated">(truncated)</span>' if was_truncated else ''
+                    result_html = f'''
+                    <div class="tool-result{error_class}">
+                        <div class="result-header">Output{truncated_note}</div>
+                        <pre class="result-content">{escape_html(truncated_content)}</pre>
+                    </div>
+                    '''
+
+            open_attr = '' if collapsed else ' open'
+            parts.append(f'''
+            <details class="tool-call"{open_attr}>
+                <summary>{summary}</summary>
+                <pre class="tool-input">{input_formatted}</pre>
+                {result_html}
+            </details>
+            ''')
+
+    return parts
+
+
+def group_messages(messages: list) -> list:
+    """Group adjacent user/assistant messages together."""
+    groups = []
+    current_group = None
+
+    for msg in messages:
+        msg_type = msg.get('type')
+        content = msg.get('message', {}).get('content', '')
+
+        # User messages with array content are tool results - they don't render
+        # anything visible, so skip them for grouping purposes
+        if msg_type == 'user' and isinstance(content, list):
+            continue
+
+        # Only group user and assistant messages
+        if msg_type in ('user', 'assistant'):
+            if current_group and current_group['type'] == msg_type:
+                # Same type, add to current group
+                current_group['messages'].append(msg)
+            else:
+                # Different type, start new group
+                if current_group:
+                    groups.append(current_group)
+                current_group = {'type': msg_type, 'messages': [msg]}
+        else:
+            # Non-groupable message (progress, system, etc.)
+            if current_group:
+                groups.append(current_group)
+                current_group = None
+            groups.append({'type': msg_type, 'messages': [msg]})
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
+def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> str:
+    """Render a group of messages to HTML."""
+    group_type = group['type']
+    messages = group['messages']
+
+    if not messages:
         return ''
 
-    if msg_type == 'assistant':
-        content = message.get('content', [])
-        if not content:
+    # Get timestamp from first message
+    first_ts = messages[0].get('timestamp', '')
+    ts_display = ''
+    if first_ts:
+        try:
+            dt = parse_timestamp(first_ts)
+            ts_display = f'<span class="timestamp">{dt.strftime("%H:%M:%S")}</span>'
+        except:
+            pass
+
+    if group_type == 'user':
+        parts = []
+        for msg in messages:
+            content = render_user_content(msg)
+            if content:
+                parts.append(content)
+
+        if not parts:
             return ''
 
-        ts_display = ''
-        if timestamp:
-            try:
-                dt = parse_timestamp(timestamp)
-                ts_display = f'<span class="timestamp">{dt.strftime("%H:%M:%S")}</span>'
-            except:
-                pass
+        return f'''
+        <div class="message user">
+            <div class="message-header">
+                <span class="role">User</span>
+                {ts_display}
+            </div>
+            <div class="content">{''.join(parts)}</div>
+        </div>
+        '''
 
+    if group_type == 'assistant':
         parts = []
-        for block in content:
-            block_type = block.get('type')
-
-            if block_type == 'text':
-                text = block.get('text', '')
-                if text.strip():
-                    parts.append(f'<div class="text-block">{markdown_to_html(text)}</div>')
-
-            elif block_type == 'tool_use':
-                tool_id = block.get('id', '')
-                tool_name = block.get('name', '')
-                tool_input = block.get('input', {})
-
-                summary = escape_html(get_tool_summary(tool_name, tool_input))
-                input_formatted = escape_html(format_tool_input(tool_name, tool_input))
-
-                # Get paired result
-                result_html = ''
-                if tool_id in tool_results:
-                    result = tool_results[tool_id]
-                    result_content = result.get('content', '')
-                    is_error = result.get('is_error', False)
-
-                    if result_content:
-                        truncated_content, was_truncated = truncate_output(str(result_content))
-                        error_class = ' error' if is_error else ''
-                        truncated_note = ' <span class="truncated">(truncated)</span>' if was_truncated else ''
-                        result_html = f'''
-                        <div class="tool-result{error_class}">
-                            <div class="result-header">Output{truncated_note}</div>
-                            <pre class="result-content">{escape_html(truncated_content)}</pre>
-                        </div>
-                        '''
-
-                open_attr = '' if collapsed else ' open'
-                parts.append(f'''
-                <details class="tool-call"{open_attr}>
-                    <summary>{summary}</summary>
-                    <pre class="tool-input">{input_formatted}</pre>
-                    {result_html}
-                </details>
-                ''')
+        for msg in messages:
+            msg_parts = render_assistant_content(msg, tool_results, collapsed)
+            parts.extend(msg_parts)
 
         if not parts:
             return ''
@@ -410,7 +467,11 @@ def render_message(msg: dict, tool_results: dict, collapsed: bool) -> str:
         </div>
         '''
 
-    # Progress, system, queue-operation messages
+    # Progress, system, queue-operation messages - render individually
+    msg = messages[0]
+    msg_type = msg.get('type')
+    timestamp = msg.get('timestamp', '')
+
     if msg_type == 'progress':
         content = msg.get('content', {})
         operation = content.get('operation', '')
@@ -491,10 +552,11 @@ def generate_html(messages: list, session_id: str, collapsed: bool) -> str:
         else:
             date_range = f'{start.strftime("%Y-%m-%d %H:%M")} - {end.strftime("%Y-%m-%d %H:%M")}'
 
-    # Render messages
+    # Group and render messages
+    groups = group_messages(messages)
     rendered_messages = []
-    for msg in messages:
-        html_content = render_message(msg, tool_results, collapsed)
+    for group in groups:
+        html_content = render_message_group(group, tool_results, collapsed)
         if html_content:
             rendered_messages.append(html_content)
 
