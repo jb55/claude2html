@@ -1,5 +1,7 @@
 # claude2html
 
+[example][example]
+
 Convert Claude Code session logs to shareable HTML pages.
 
 Claude Code stores conversation history in JSONL files. This tool converts those logs into clean, readable HTML that you can share or archive.
@@ -91,3 +93,5 @@ The generated HTML includes:
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+[example]: https://jb55.com/s/c99bf661-acf3-4913-9cb9-8dc42a7f2250.html
