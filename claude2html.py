@@ -408,13 +408,15 @@ def group_messages(messages: list) -> list:
     return groups
 
 
-def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> str:
+def render_message_group(group: dict, tool_results: dict, collapsed: bool, index: int) -> str:
     """Render a group of messages to HTML."""
     group_type = group['type']
     messages = group['messages']
 
     if not messages:
         return ''
+
+    msg_id = f'msg-{index}'
 
     # Get timestamp from first message
     first_ts = messages[0].get('timestamp', '')
@@ -425,6 +427,8 @@ def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> st
             ts_display = f'<span class="timestamp">{dt.strftime("%H:%M:%S")}</span>'
         except:
             pass
+
+    anchor_link = f'<a href="#{msg_id}" class="anchor-link" aria-label="Link to this message">#</a>'
 
     if group_type == 'user':
         parts = []
@@ -437,10 +441,10 @@ def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> st
             return ''
 
         return f'''
-        <div class="message user">
+        <div class="message user" id="{msg_id}">
             <div class="message-header">
                 <span class="role">User</span>
-                {ts_display}
+                <span class="header-right">{anchor_link}{ts_display}</span>
             </div>
             <div class="content">{''.join(parts)}</div>
         </div>
@@ -456,10 +460,10 @@ def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> st
             return ''
 
         return f'''
-        <div class="message assistant">
+        <div class="message assistant" id="{msg_id}">
             <div class="message-header">
                 <span class="role">Assistant</span>
-                {ts_display}
+                <span class="header-right">{anchor_link}{ts_display}</span>
             </div>
             <div class="content">
                 {''.join(parts)}
@@ -484,10 +488,10 @@ def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> st
             except:
                 pass
         return f'''
-        <div class="message system-msg progress-msg">
+        <div class="message system-msg progress-msg" id="{msg_id}">
             <div class="message-header">
                 <span class="role">Progress</span>
-                {ts_display}
+                <span class="header-right">{anchor_link}{ts_display}</span>
             </div>
             <div class="content"><code>{escape_html(tool)}: {escape_html(operation)}</code></div>
         </div>
@@ -505,10 +509,10 @@ def render_message_group(group: dict, tool_results: dict, collapsed: bool) -> st
             except:
                 pass
         return f'''
-        <div class="message system-msg">
+        <div class="message system-msg" id="{msg_id}">
             <div class="message-header">
                 <span class="role">System</span>
-                {ts_display}
+                <span class="header-right">{anchor_link}{ts_display}</span>
             </div>
             <div class="content"><pre>{escape_html(str(content))}</pre></div>
         </div>
@@ -555,8 +559,8 @@ def generate_html(messages: list, session_id: str, collapsed: bool) -> str:
     # Group and render messages
     groups = group_messages(messages)
     rendered_messages = []
-    for group in groups:
-        html_content = render_message_group(group, tool_results, collapsed)
+    for i, group in enumerate(groups):
+        html_content = render_message_group(group, tool_results, collapsed, i)
         if html_content:
             rendered_messages.append(html_content)
 
@@ -620,6 +624,10 @@ def generate_html(messages: list, session_id: str, collapsed: bool) -> str:
 
         * {
             box-sizing: border-box;
+        }
+
+        html {
+            scroll-padding-top: 80px;
         }
 
         body {
@@ -807,6 +815,34 @@ def generate_html(messages: list, session_id: str, collapsed: bool) -> str:
         .message.assistant .role-icon {
             background: var(--success-subtle);
             color: var(--success);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .anchor-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.15s ease, color 0.15s ease;
+        }
+
+        .message:hover .anchor-link {
+            opacity: 1;
+        }
+
+        .anchor-link:hover {
+            color: var(--accent);
+        }
+
+        .message:target {
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
         }
 
         .timestamp {
